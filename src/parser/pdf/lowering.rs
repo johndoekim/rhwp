@@ -414,12 +414,10 @@ pub(super) fn lower(
         {
             return Err("rotated/mirrored/sheared image is not supported by this POC".into());
         }
-        if u64::from(image.width()) * u64::from(image.height()) > 16000000 {
-            return Err(
-                "image pixel budget exceeded (after extraction; not a parser allocation guarantee)"
-                    .into(),
-            );
-        }
+        // extract() validates both source and composited pixel dimensions
+        // against this request's policy before constructing ExtractedPage.
+        // PNG encoding independently enforces the same request's buffer/work
+        // limits; a second fixed pixel cap here would override that policy.
         allocation
             .push(
                 &mut image_sources,
@@ -555,10 +553,27 @@ pub(super) fn lower(
             .map_err(message)?;
         cs.font_ids = [font_id; 7];
         cs.base_size = hu(span.font_size)? as i32;
+        if span.rotation_degrees != 0.0 {
+            cs.ratios = [span.horizontal_scaling.round() as u8; 7];
+        }
         cs.bold = span.font_weight.is_bold();
         cs.italic = span.is_italic;
         cs.text_color = rgb(span.color);
         cs.text_paint = page.span_paints[span_index];
+        // Type3 metrics-only glyph programs carry searchable text without ink.
+        // Retain the strings/advances in editable IR, but do not invent a second
+        // glyph from a host fallback font over the PDF's independent artwork.
+        if scoped_font.is_some_and(|font| font.type3_metrics_only) {
+            cs.text_paint = Some(crate::model::text_paint::TextPaint {
+                fill: false,
+                width_mpt: 0,
+                stroke_color: 0,
+                fill_alpha: 0,
+                stroke_alpha: 0,
+                line_join: 0,
+                miter_limit_milli: 10_000,
+            });
+        }
         // PDF space advances belong to the source font/text state, not HWP's
         // default half-em space. Select the existing common IR contract only
         // when measured origin-to-origin spaces agree with the declared metric.
@@ -595,6 +610,7 @@ pub(super) fn lower(
         let key = (
             font_id,
             cs.base_size,
+            cs.ratios,
             cs.bold,
             cs.italic,
             cs.text_color,
@@ -761,6 +777,16 @@ pub(super) fn lower_picture(
     let allocation = Allocation(budget);
     let b = image.bbox().ok_or("image has no placement geometry")?;
     let matrix = image.matrix();
+    // HWP image dimensions use 1/7200 inch at the 96 dpi import scale; crop
+    // coordinates are signed i32. A pixel-area cap alone does not bound a
+    // single long dimension. Reject before PNG encoding or resource insertion.
+    let dimension = |pixels: u32| {
+        pixels
+            .checked_mul(75)
+            .filter(|&value| value <= i32::MAX as u32)
+            .ok_or("image dimension exceeds HWP crop coordinate range")
+    };
+    let img_dim = (dimension(image.width())?, dimension(image.height())?);
     let data = image
         .to_png_bytes_with_budget(budget)
         .map_err(|e| e.to_string())?;
@@ -795,7 +821,6 @@ pub(super) fn lower_picture(
     // of the full bitmap. The visible frame and the selected pixels have the
     // same proportions, preserving scale instead of fitting all pixels into
     // a smaller cell. PDF y points up, image crop y points down.
-    let img_dim = (image.width() * 75, image.height() * 75);
     let crop_x = |x: f32| {
         ((f64::from(x) - f64::from(matrix[4])) / f64::from(matrix[0]) * f64::from(img_dim.0))
             .round() as i32
