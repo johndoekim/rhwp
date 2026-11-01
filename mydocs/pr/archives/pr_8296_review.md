@@ -2,9 +2,10 @@
 
 ## 최종 판정
 
-**머지 보류 — CanvasKit이 준비된 공개 대체 글꼴을 사용하지 않아 안쪽 ‘인’을 잃는 반례가 재현됐다.**
-PR의 원 문제와 핵심 수정은 유효하다. 이 한정된 글꼴 선택 경로를 보정한 뒤 수용하는 방향을 권고한다.
-GitHub 승인 리뷰·댓글·push·merge는 아직 수행하지 않았다.
+**승인 — CanvasKit 안쪽 face·glyph coverage 보정을 반영한 code head의 로컬 검증과 Full CI를 완료했다.**
+원 기여의 1em 날인 기호 복원을 수용하며, 최초 head의 P1은 보정 `3ddf77af61`에서 해결했다.
+2026-11-01 작업지시자가 수용 처리를 승인했다. 아래 최초 검토는 원 head의 진단 이력으로 남긴다.
+최신 문서 후행 head의 필수 검사와 병합 상태는 push 후 다시 확인한다.
 
 ## 접수와 최신 devel
 
@@ -14,9 +15,9 @@ GitHub 승인 리뷰·댓글·push·merge는 아직 수행하지 않았다.
 - 검토 head: `f3e2128edca7b188080b2a94f25e0988e26c9699`, fork `johndoekim/rhwp`, base `devel`.
 - 최신 devel: `20c9678b01c5a564bb510c9fccd652cceafcd212`.
   최신 코드의 F012B → `(인)` 확장은 그대로다. 동일 제품 내용의 최적화 WASM을 실제 실행한 SVG에서도
-  `인감(인)또는서명`을 확인했다. [관측값](assets/pr8296-maintainer-20261101/latest-devel-result.json).
+  `인감(인)또는서명`을 확인했다. [관측값](../assets/pr8296-maintainer-20261101/latest-devel-result.json).
 - 최신 devel과 head의 merge-tree는 `d9dc04fdf031f6c68d9c3b7aa1015097fad22ed9`이며 충돌이 없다.
-- head의 CI는 35 SUCCESS·6 조건부 SKIPPED다. [API 원문](assets/pr8296-maintainer-20261101/pr-checks.json).
+- head의 CI는 35 SUCCESS·6 조건부 SKIPPED다. [API 원문](../assets/pr8296-maintainer-20261101/pr-checks.json).
   녹색 CI를 실제 glyph/face 선택의 근거로 대신하지 않았다.
 
 ## P1 — 준비된 공개 안쪽 글꼴을 CanvasKit에서 소비하지 않음
@@ -31,10 +32,10 @@ Rust의 `enclosed_pua_geometry::inner_faces`가 지정한 `RHWP Public Batang` �
 동시에 진단은 `lastRenderCompleted=true`, unsupported 없음, software surface로 보고한다.
 Public Batang을 직접 지정한 정상 대조군은 같은 문자에 glyph ID `10638`을 사용하고 정상 표시한다.
 
-- [원 문서 textRun의 글꼴 커버리지 반례](assets/pr8296-maintainer-20261101/canvaskit-original-op-missing-inner.png)
-- [단일 기호 반례](assets/pr8296-maintainer-20261101/canvaskit-inner-missing.png) /
-  [Public Batang 정상 대조군](assets/pr8296-maintainer-20261101/canvaskit-public-face-control.png)
-- [실제 drawText glyph ID·준비한 글꼴·진단·폰트 응답 해시](assets/pr8296-maintainer-20261101/canvaskit-probe-result.json)
+- [원 문서 textRun의 글꼴 커버리지 반례](../assets/pr8296-maintainer-20261101/canvaskit-original-op-missing-inner.png)
+- [단일 기호 반례](../assets/pr8296-maintainer-20261101/canvaskit-inner-missing.png) /
+  [Public Batang 정상 대조군](../assets/pr8296-maintainer-20261101/canvaskit-public-face-control.png)
+- [실제 drawText glyph ID·준비한 글꼴·진단·폰트 응답 해시](../assets/pr8296-maintainer-20261101/canvaskit-probe-result.json)
 
 별도 브라우저에서 실제 제품 `CanvasKitLayerRenderer`와 공급한 font bytes를 사용했다. 원 HWP에서
 생산한 textRun을 추출해 본문 face의 Hangul coverage만 바꾼 통제 반례와 단일 기호 대조군이다.
@@ -66,10 +67,10 @@ Public Batang을 직접 지정한 정상 대조군은 같은 문자에 glyph ID 
 | 복학원서 | 1 | 97.23% | 97.13% |
 | issue4680 장부 | 1 | 99.12% | 99.10% |
 
-[보관된 base/head TSV와 신원](assets/pr8296-maintainer-20261101/manifest.json)의 비교 base는 `da39c53661`이다.
+[보관된 base/head TSV와 신원](../assets/pr8296-maintainer-20261101/manifest.json)의 비교 base는 `da39c53661`이다.
 최신 base `20c9678b01`의 전쪽 Native/WASM 재측정과 보정 후 핵심 glyph 확대 판독은 최종 수용 전에
 마쳐야 한다. 이번 P1 발견을 `90% 이상` 수치로 면제하지 않는다.
-[Native 대표 review](assets/pr8296-maintainer-20261101/native-seal-form-review.png)에서 실제 서식의
+[Native 대표 review](../assets/pr8296-maintainer-20261101/native-seal-form-review.png)에서 실제 서식의
 내용과 셀 경계를 직접 확인했고, CanvasKit 반례 PNG도 직접 판독했다.
 
 재현 입력과 독립 Print PDF는 원 head commit에 포함된
@@ -83,9 +84,36 @@ Public Batang을 직접 지정한 정상 대조군은 같은 문자에 glyph ID 
 실제 브라우저 재현과 최신 devel SVG 확인을 완료했다. 원 head의 광범위 GitHub CI는 재사용하고
 로컬에서는 날인·네모 숫자·PUA 정규화·기존 저장 보존의 집중 검사 28건을 실제 재실행해
 모두 통과했다. 개인·시스템 글꼴을 가린 Native Skia 경로이며 같은 suite의 비선택 1,710건은
-통과 수에 포함하지 않았다. [증거 manifest](assets/pr8296-maintainer-20261101/manifest.json)에
+통과 수에 포함하지 않았다. [증거 manifest](../assets/pr8296-maintainer-20261101/manifest.json)에
 실행 head·격리 조건·로그 해시를 기록했다. 문서 링크·스크립트 구문·공백 검사도 통과했다.
 
 메인테이너의 제한된 보정안은 CanvasKit 안쪽 face 후보·coverage 선택, 실제 glyph 기반 회귀,
 해당 backend 및 최신 base 전쪽 비교다. 다른 조판 리팩터링으로 범위를 넓힐 필요는 없다.
 원격 보정 제출·댓글·승인·머지는 작업지시자의 후속 범위 결정 뒤 수행한다.
+
+## 수용 보정과 최종 code head 검증
+
+- 원 head `f3e2128edc` 위에서 로컬 검토 기록을 replay한 `9f6b7ff6ef`, 제품·회귀 보정 `3ddf77af61`을 추가했다. 기여자 커밋의 rebase/amend/force-push는 없다.
+- 변경 제품은 CanvasKit TypeScript 두 파일이다. Rust와 기존 Canvas2D/SVG 제품 내용은 원 head와 같으며 원 기여의 검증된 최적화 bundle을 재사용한다.
+- 공통 JSON의 안쪽 face 우선순위를 소비하고 실제 glyph coverage를 확인한다. 모든 후보가 없으면 glyphMapping 진단으로 보고하고 부분 테두리를 성공 출력으로 남기지 않는다. 준비된 Public face·본문 대체·전체 후보 누락을 검사했다.
+- 원 renderer를 Vite 로더에 주입한 음성 대조에서는 새 실제-glyph 검사가 실패했고, 보정 후 renderer-contract와 TypeScript, Studio 2,700 PASS/기존 skip 2가 통과했다. 앞선 Native 집중 28건의 Rust 내용도 같다.
+- [최신 base/후보의 실행 신원·로그 해시·전쪽 비교](../assets/pr8296-maintainer-20261101/acceptance-validation.json): 최신 devel `20c9678b01`을 실제 재출력했다. Native/WASM 8개 page/backend 쌍 모두 90% 이상이며 하락·누락은 없다. 위임장 2쪽 99.94/99.91%, 복학원서 1쪽 97.23/97.13%, 장부 1쪽 99.12/99.10%가 각 경로 최저다.
+- [실제 glyph 선택 보정 후](../assets/pr8296-maintainer-20261101/canvaskit-probe-after.json), [동일 반례의 보정 PNG](../assets/pr8296-maintainer-20261101/canvaskit-original-op-after.png), [Print·Native·WASM·CanvasKit 확대](../assets/pr8296-maintainer-20261101/seal-closeup-final.png)를 직접 판독했다. 안쪽 ‘인’과 끝 ‘명’이 셀 안에 보존된다.
+- 세 문서의 전체 PageLayerTree도 실제 CanvasKit software로 재생했다. 공개 글꼴 aliases와 U+2024를 포함한 DejaVu 대체를 명시한 환경이며 unexpected unsupported op가 없다. 원 한컴 글꼴과의 점수로 승격하지 않는다. 기존 네모 숫자의 Native 전체 PNG와 CanvasKit 글꼴·장평 대조 5개는 바이트가 동일하다.
+
+### code head CI — `3ddf77af61b10a9ace10224588ad68841e79b2f1`
+
+| 검사 | 결과 |
+| --- | --- |
+| CI: lint·frontend·Native Skia·Archive A–E·집계 | [SUCCESS](https://github.com/edwardkim/rhwp/actions/runs/41277462618) |
+| CodeQL 전체 | [SUCCESS](https://github.com/edwardkim/rhwp/actions/runs/41277462643) |
+| Render Diff | [SUCCESS](https://github.com/edwardkim/rhwp/actions/runs/41277462671) |
+| Adapter inter-diff | [SUCCESS](https://github.com/edwardkim/rhwp/actions/runs/41277462622) |
+| Proptest roundtrip | [SUCCESS](https://github.com/edwardkim/rhwp/actions/runs/41277462612) |
+| 최종 CI Impact Policy | [SUCCESS](https://github.com/edwardkim/rhwp/actions/runs/41279110227) |
+
+[API 원문](../assets/pr8296-maintainer-20261101/code-ci-final.json)을 보존했다. 성공한 같은 code head의 전체 Rust 검사를 다시 로컬에서 반복하지 않는다.
+
+### merge 후 contributor comment 계획
+
+원 기여의 1em 복원에 감사하고 CanvasKit 보정의 사유·범위를 구분한다. 실제 merge SHA와 위 CI URL, 전쪽 수치와 최신 검토 기록을 연결한다. merge SHA에 존재하는 Native/WASM review·overlay와 보정 후 CanvasKit PNG를 포함하고 Visual Sweep 정본을 링크한다. 한국어 존댓말·UTF-8 본문을 파일로 전송하고 게시 뒤 API로 확인한다. fork branch는 보존하며 관련 #8201의 종료 여부를 확인한다.
