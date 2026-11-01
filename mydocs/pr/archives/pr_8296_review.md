@@ -58,8 +58,8 @@ Public Batang을 직접 지정한 정상 대조군은 같은 문자에 glyph ID 
 문서 ID·페이지 수 맞춤 분기나 표 pagination 변경은 없으며 표 이어받기 컷/예약 높이 검토는 비해당이다.
 렌더링 기대값은 독립 한컴 PDF를 근거로 교정했고, 새 관계 검사로 핵심 문자·seal·내용 보존을 다룬다.
 
-다음은 기존 검증 작업공간에서 보관된 실제 Native/fresh WASM 전쪽 TSV를 source/input 해시 확인 후
-재사용한 수치다. **이번에 최신 devel 전체 페이지를 다시 렌더링한 결과로 표기하지 않는다.**
+최초 진단에서는 기존 검증 작업공간의 Native/fresh WASM 전쪽 TSV를 source/input 해시 확인 후
+재사용했다. 아래는 그때의 원 head 수치이며, 최신 base의 재출력과 수용 보정 결과는 뒤 절에 구분한다.
 
 | 문서 | 쪽수 | 원 head Native 최저 raw | 원 head fresh WASM 최저 raw |
 | --- | ---: | ---: | ---: |
@@ -68,8 +68,8 @@ Public Batang을 직접 지정한 정상 대조군은 같은 문자에 glyph ID 
 | issue4680 장부 | 1 | 99.12% | 99.10% |
 
 [보관된 base/head TSV와 신원](../assets/pr8296-maintainer-20261101/manifest.json)의 비교 base는 `da39c53661`이다.
-최신 base `20c9678b01`의 전쪽 Native/WASM 재측정과 보정 후 핵심 glyph 확대 판독은 최종 수용 전에
-마쳐야 한다. 이번 P1 발견을 `90% 이상` 수치로 면제하지 않는다.
+최초 진단 당시에는 최신 base `20c9678b01`의 전쪽 Native/WASM 재측정과 보정 후 핵심 glyph 확대 판독이
+남아 있었다. 뒤의 수용 보정 단계에서 모두 완료했으며 P1을 점수만으로 면제하지 않았다.
 [Native 대표 review](../assets/pr8296-maintainer-20261101/native-seal-form-review.png)에서 실제 서식의
 내용과 셀 경계를 직접 확인했고, CanvasKit 반례 PNG도 직접 판독했다.
 
@@ -89,7 +89,8 @@ Public Batang을 직접 지정한 정상 대조군은 같은 문자에 glyph ID 
 
 메인테이너의 제한된 보정안은 CanvasKit 안쪽 face 후보·coverage 선택, 실제 glyph 기반 회귀,
 해당 backend 및 최신 base 전쪽 비교다. 다른 조판 리팩터링으로 범위를 넓힐 필요는 없다.
-원격 보정 제출·댓글·승인·머지는 작업지시자의 후속 범위 결정 뒤 수행한다.
+최초 진단 당시 원격 보정 제출·댓글·승인·머지는 후속 범위 결정 대기였다. 이후 작업지시자의 수용 승인으로
+보정 제출과 검증을 진행했으며, 정확한 원격 조치는 뒤 절과 원 PR의 메인테이너 댓글에 기록한다.
 
 ## 수용 보정과 최종 code head 검증
 
@@ -114,6 +115,40 @@ Public Batang을 직접 지정한 정상 대조군은 같은 문자에 glyph ID 
 
 [API 원문](../assets/pr8296-maintainer-20261101/code-ci-final.json)을 보존했다. 성공한 같은 code head의 전체 Rust 검사를 다시 로컬에서 반복하지 않는다.
 
+### 최신 devel 결합 검증 — `5d455015cb`
+
+code CI 성공 뒤 문서 기록을 추가하는 과정에서 오늘할일만 add/add 충돌했다. 현재 base
+`20c9678b01`과의 bridge `5d455015cb`는 두 parent를 가지며 수동 해소 경로는
+`mydocs/orders/20261101.md` 하나다. #8417·#8420 기록을 보존했다. 문서 외 tree가 녹색
+code candidate와 최신 base의 자동 병합 결과와 같고, current-base의 검사기도
+`current-base-merge-resolution-mydocs-only`로 판정했다. 최종 원격 재사용 여부는 새 head에서 확인한다.
+
+[결합 실행 manifest](../assets/pr8296-maintainer-20261101/combined-validation.json)에 Native
+`release-test`와 실제 release·wasm-opt 빌드, 명령·해시·원본 TSV를 기록했다.
+새 WASM SHA-256은 `a65db888312503f7c16ed1c3dfad59d30c01972106bacfdcdae7286a82b1b28f`이며
+`pkg`와 Studio public bundle이 같다. 문서 후행 commit은 이 제품 내용을 바꾸지 않는다.
+
+- 세 문서 4쪽의 Native/fresh WASM 8개 PNG는 앞서 검증한 후보와 바이트까지 같고, 위 전쪽
+  raw·쪽수·내용 보존 결과가 유지된다. 결합 상태의 TSV와 대표 review·overlay를 새로 산출했다.
+- [실제 CanvasKit probe](../assets/pr8296-maintainer-20261101/combined-canvaskit-probe.json)의
+  안쪽 ‘인’ draw 7회 모두 유효한 glyph다. [전체 PageLayerTree 3개 재생](../assets/pr8296-maintainer-20261101/combined-canvaskit-full-page.json)도 완료·unexpected unsupported 없음이다.
+- 위임장의 날인과 마지막 ‘명’, [복학원서의 두 날인](../assets/pr8296-maintainer-20261101/combined-bokhak-closeup.png),
+  [장부의 성명·날인](../assets/pr8296-maintainer-20261101/combined-issue4680-closeup.png)을
+  Print·Native·WASM 같은 영역에서 확대 판독했다. 원형 안의 ‘인’과 주변 내용이 보존된다.
+  기존 본문 글꼴의 획·선 표현 차이를 완전한 픽셀 일치로 주장하지 않는다.
+- 최신 base의 PDF 네 샘플은 곡선 clip 1·2·12쪽, 고해상도 이미지 1쪽, 암호화 원본
+  10·21·43쪽, f87pro 1쪽을 실제 가져오고 저장했다. base/후보의 HWPX 네 파일은 바이트가 같다.
+  결합 TypeScript 검사도 통과했다. 이는 해당 대표 쪽의 기능 보존 검사이며 127쪽 시각 검증을
+  다시 수행했다는 뜻이 아니다.
+- 추가로 시도한 32쪽 PDF 전체 가져오기·저장은 이 `release-test`/Native Skia 환경에서
+  base와 후보 모두 exit 1이었다. base의 strace에서 CPU soft/hard 90초와 SIGKILL을 확인했다.
+  이 실행은 통과 수에 넣지 않았다. PDF parser/backend/CLI는 base와 같고 대표 쪽 저장 결과도
+  같음을 확인했으며, 이번 PR에서 기존 실행 한도나 PDF 구현을 변경하지 않았다.
+
 ### merge 후 contributor comment 계획
 
 원 기여의 1em 복원에 감사하고 CanvasKit 보정의 사유·범위를 구분한다. 실제 merge SHA와 위 CI URL, 전쪽 수치와 최신 검토 기록을 연결한다. merge SHA에 존재하는 Native/WASM review·overlay와 보정 후 CanvasKit PNG를 포함하고 Visual Sweep 정본을 링크한다. 한국어 존댓말·UTF-8 본문을 파일로 전송하고 게시 뒤 API로 확인한다. fork branch는 보존하며 관련 #8201의 종료 여부를 확인한다.
+
+이미지는 결합 상태의 `combined-native-seal-form-review-001.png`,
+`combined-native-seal-overlay.png`, `combined-wasm-seal-form-review-001.png`,
+`combined-wasm-seal-overlay.png`, `combined-canvaskit-original-op.png`를 사용한다.

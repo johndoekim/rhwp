@@ -4,7 +4,7 @@
 브라우저 재현은 원 head `f3e2128edc`의 TypeScript와 같은 제품 내용의 최적화 WASM을 사용했다.
 원 문서의 PaintOp를 사용한 통제 face 실험이며 새로운 한컴 원본/Print fixture라고 주장하지 않는다.
 원래 작업공간의 기존 검증 자료는 source와 입력 해시를 대조한 뒤 참고 자료로 재사용한다.
-현재 devel의 전쪽 재출력과 최종 무회귀 검증을 완료했다고 표기하지 않는다.
+위 설명은 최초 진단 시점이다. 수용 보정 단계의 최신 base 재출력과 결합 검증은 아래에 구분한다.
 
 진단 스크립트는 [canvaskit-probe.mjs](canvaskit-probe.mjs)다. 원 head의 checkout·검증된 web WASM·
 기존 npm 의존성을 준비하고 Studio Vite를 별도 포트에서 실행한 뒤 다음과 같이 호출한다.
@@ -36,3 +36,16 @@ base/head TSV는 최신 devel `20c9678b01`을 실제 재출력한 값으로 갱�
 처음에는 이 공개 subset에 U+2024가 없어 명시적으로 DejaVu Sans를 공급한 뒤 재실행했습니다.
 그 전의 글꼴 누락 실행은 통과로 세지 않습니다. 기존 네모 숫자는 Native 전체 PNG와
 CanvasKit의 다섯 font/ratio PNG가 baseline과 바이트 단위로 같습니다.
+
+## 최신 devel 결합 상태
+
+`combined-validation.json`과 `combined-*.tsv`는 `5d455015cb`에서 새로 빌드한 Native와
+release·wasm-opt WASM의 실제 실행입니다. 세 문서 4쪽의 8개 PNG가 앞선 후보와 바이트까지
+같습니다. `combined-*-review-*.png`·`combined-*-seal-overlay.png`는 이 새 출력에서 만들었습니다.
+`combined-bokhak-closeup.png`·`combined-issue4680-closeup.png`는 같은 96dpi 영역을 3배로
+확대해 Print·Native·WASM을 직접 판독한 자료입니다.
+
+`combined-canvaskit-probe.json`·`combined-canvaskit-full-page.json`과 PNG도 새 최적화 bundle을
+공급한 실제 브라우저 결과입니다. 통제 글꼴 환경과 피델리티 측정의 구분은 앞 설명과 같습니다.
+결합 manifest에는 PDF 대표 쪽의 base/후보 저장 결과 동일성, 추가 전체 가져오기의 기존 CPU
+한도 종료와 검사 범위도 구분해 기록했습니다. 실패한 전체 가져오기를 성공으로 세지 않습니다.
