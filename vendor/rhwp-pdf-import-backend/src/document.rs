@@ -1,5 +1,6 @@
 //! PDF document model.
 
+mod import_encryption;
 mod pattern_images;
 
 use crate::encryption::EncryptionHandler;
@@ -528,6 +529,9 @@ pub struct PdfDocument {
     /// Bounded at [`DEFAULT_XOBJECT_CACHE_MAX_ENTRIES`] entries with FIFO eviction.
     pub(crate) form_xobject_images_cache:
         Mutex<BoundedEntryCache<ObjectRef, Vec<crate::extractors::PdfImage>>>,
+    /// Bounded import source pixels and encoded PNGs, owned by this request.
+    pub(crate) import_image_cache:
+        Mutex<BoundedEntryCache<ObjectRef, (crate::extractors::PdfImage, Option<bool>)>>,
     /// Regions marked for erasure per page. Mutex for `&self` write-path methods (#398).
     pub(crate) erase_regions: Mutex<HashMap<usize, Vec<crate::geometry::Rect>>>,
     /// LRU cache of decompressed page content streams, keyed by page index.
@@ -1395,9 +1399,6 @@ impl PdfDocument {
         // Note: Encryption initialization was originally lazy, but decode_stream_with_encryption
         // only has &self access which prevents initialization.
         // We now initialize eagerly to ensure the handler is ready when needed.
-        if import_budget.is_some() && trailer.as_dict().is_some_and(|d| d.contains_key("Encrypt")) {
-            return Err(Error::EncryptedPdf);
-        }
         let document = Self {
             reader: Mutex::new(reader),
             load_lock: Mutex::new(()),
@@ -1447,6 +1448,10 @@ impl PdfDocument {
                 DEFAULT_XOBJECT_CACHE_MAX_ENTRIES,
                 import_budget.clone(),
             )),
+            import_image_cache: Mutex::new(BoundedEntryCache::with_budget(
+                8,
+                import_budget.clone(),
+            )),
             erase_regions: Mutex::new(HashMap::new()),
             page_content_cache: Mutex::new(BoundedEntryCache::with_budget(
                 64,
@@ -1482,6 +1487,9 @@ impl PdfDocument {
 
         // Initialize encryption immediately
         if let Err(e) = document.ensure_encryption_initialized() {
+            if document.import_budget.is_some() {
+                return Err(e);
+            }
             log::error!("Failed to initialize encryption: {}", e);
             // We continue anyway, as it might just be an unsupported security handler
             // and maybe we can still read parts of the file (or fail later)
@@ -1567,13 +1575,20 @@ impl PdfDocument {
             };
 
             // Clone the encrypt entry (we'll load it outside this block)
-            let encrypt_ref = encrypt_entry.clone();
+            let encrypt_ref =
+                crate::object_copy::clone_object(encrypt_entry, self.import_budget.as_deref())?;
 
             // Get file ID (required for encryption key derivation)
             let file_id = match trailer_dict.get("ID") {
                 Some(Object::Array(arr)) => {
                     if let Some(first_id) = arr.first() {
                         if let Some(id_bytes) = first_id.as_string() {
+                            if let Some(budget) = self.import_budget.as_deref() {
+                                if id_bytes.len() > 1024 {
+                                    return Err(budget.reject("encryption file identifier"));
+                                }
+                                budget.charge_decoded(id_bytes.len())?;
+                            }
                             id_bytes.to_vec()
                         } else {
                             log::warn!(
@@ -1615,13 +1630,17 @@ impl PdfDocument {
 
         // Resolve any indirect references within the encrypt dictionary.
         // Some PDFs store /O, /U, /V, /R, /P as indirect references (e.g., `7 0 R`).
-        let encrypt_obj = if let Some(dict) = encrypt_obj.as_dict() {
-            let mut resolved_dict = dict.clone();
+        let mut encrypt_obj = if let Some(dict) = encrypt_obj.as_dict() {
+            let mut resolved_dict =
+                crate::object_copy::clone_dictionary(dict, self.import_budget.as_deref())?;
             for value in resolved_dict.values_mut() {
                 if let Object::Reference(obj_ref) = value {
                     match self.load_object(*obj_ref) {
                         Ok(resolved) => *value = resolved,
                         Err(e) => {
+                            if self.import_budget.is_some() {
+                                return Err(e);
+                            }
                             log::warn!("Failed to resolve indirect ref in /Encrypt dict: {}", e);
                         },
                     }
@@ -1633,7 +1652,9 @@ impl PdfDocument {
         };
 
         // Create encryption handler with the file_id we extracted above
+        self.validate_import_encryption(&mut encrypt_obj, &file_id)?;
         let mut handler = EncryptionHandler::new(&encrypt_obj, file_id)?;
+        self.reserve_import_authentication(b"")?;
 
         // Try to authenticate with empty password (common default)
         match handler.authenticate(b"") {
@@ -1815,6 +1836,12 @@ impl PdfDocument {
             .map(|h| h.is_authenticated())
             .unwrap_or(true);
 
+        if self.import_budget.is_some() && password.is_empty() {
+            return Ok(was_authenticated);
+        }
+        if self.is_encrypted() {
+            self.reserve_import_authentication(password)?;
+        }
         let result = match self.encryption_handler.lock_or_recover().as_mut() {
             Some(handler) => handler.authenticate(password),
             None => return Ok(true), // Not encrypted, always "authenticated"
@@ -3300,11 +3327,23 @@ impl PdfDocument {
         obj: &mut Object,
         obj_num: u32,
         gen_num: u32,
-    ) {
+        budget: Option<&crate::import_limits::ImportBudget>,
+    ) -> Result<()> {
+        if let Some(budget) = budget {
+            budget.check()?;
+            if let Object::String(bytes) = obj {
+                budget.charge_codec_allocation(bytes.len())?;
+                budget.charge_decoded(bytes.len().saturating_mul(2))?;
+                budget.charge_codec_work(bytes.len())?;
+            }
+        }
         match obj {
             Object::String(bytes) => match handler.decrypt_string(bytes, obj_num, gen_num) {
                 Ok(decrypted) => *bytes = decrypted,
                 Err(e) => {
+                    if budget.is_some() {
+                        return Err(e);
+                    }
                     log::debug!(
                         "String decryption failed for object {} {}: {}",
                         obj_num,
@@ -3315,12 +3354,12 @@ impl PdfDocument {
             },
             Object::Array(items) => {
                 for item in items {
-                    Self::decrypt_strings_in_object(handler, item, obj_num, gen_num);
+                    Self::decrypt_strings_in_object(handler, item, obj_num, gen_num, budget)?;
                 }
             },
             Object::Dictionary(dict) => {
                 for value in dict.values_mut() {
-                    Self::decrypt_strings_in_object(handler, value, obj_num, gen_num);
+                    Self::decrypt_strings_in_object(handler, value, obj_num, gen_num, budget)?;
                 }
             },
             Object::Stream { dict, .. } => {
@@ -3328,11 +3367,12 @@ impl PdfDocument {
                 // `decode_stream_with_encryption`. Its dict may still
                 // contain encrypted strings (e.g., /Metadata).
                 for value in dict.values_mut() {
-                    Self::decrypt_strings_in_object(handler, value, obj_num, gen_num);
+                    Self::decrypt_strings_in_object(handler, value, obj_num, gen_num, budget)?;
                 }
             },
             _ => {},
         }
+        Ok(())
     }
 
     /// Implementation with recursion guard to prevent infinite loops.
@@ -3359,7 +3399,7 @@ impl PdfDocument {
             {
                 return Err(parse_error());
             }
-            let (remaining, object) =
+            let (remaining, mut object) =
                 crate::parser::parse_indirect_prefix_with_budget(remaining, budget, |reference| {
                     self.load_object(reference)
                 })?;
@@ -3367,6 +3407,7 @@ impl PdfDocument {
             if end != crate::lexer::Token::ObjEnd {
                 return Err(parse_error());
             }
+            self.decrypt_loaded_object(&mut object, obj_ref)?;
             budget.check()?;
             self.object_cache
                 .lock_or_recover()
@@ -3634,27 +3675,9 @@ impl PdfDocument {
             }
         };
 
-        // Decrypt string values inside this uncompressed object before
-        // caching. Skip the /Encrypt dict (its entries are key material)
-        // and the non-authenticated case (no key derived yet). Strings
-        // inside compressed objects ride along with the ObjStm payload
-        // and are already in clear text per ISO 32000-1:2008 §7.6.2.
-        let is_encrypt_dict = *self.encrypt_dict_ref.lock_or_recover() == Some(obj_ref);
-        if !is_encrypt_dict {
-            let handler_guard = self.encryption_handler.lock_or_recover();
-            if let Some(handler) = handler_guard.as_ref() {
-                if handler.is_authenticated() {
-                    Self::decrypt_strings_in_object(
-                        handler,
-                        &mut obj,
-                        obj_ref.id,
-                        obj_ref.gen as u32,
-                    );
-                }
-            }
-        }
-
-        // Cache the object
+        self.decrypt_loaded_object(&mut obj, obj_ref)?;
+        // Cache the plaintext object: all bounded image/mask/content decoders
+        // consume this same representation, including encrypted ObjStm payloads.
         self.check_import_budget()?;
         self.object_cache.lock_or_recover().insert(
             obj_ref,
@@ -3743,7 +3766,11 @@ impl PdfDocument {
         // (non-standard), the unencrypted parse will fail and we fall back to
         // trying with decryption.
         let handler_ref = self.encryption_handler.lock_or_recover();
-        let objects_map = if handler_ref.is_some() {
+        let objects_map = if self.import_budget.is_some() {
+            // Bounded load has already decrypted the ObjStm, retaining its
+            // request context. Never retry ciphertext or bypass a budget error.
+            parse_object_stream_with_decryption(&stream_obj, None, 0, 0)?
+        } else if handler_ref.is_some() {
             // First try without decryption (spec-compliant path)
             match parse_object_stream_with_decryption(&stream_obj, None, 0, 0) {
                 Ok(map) => map,
@@ -12791,11 +12818,29 @@ impl PdfDocument {
         // five-degree quadrant snap. Glyph positions must use the same frame.
         for span in &mut spans {
             if let Some(crate::extractors::text::SpanPaintOrder {
-                basis: [a, b, _, _],
+                basis: [a, b, c, d],
                 ..
             }) = orders.get(&span.sequence)
             {
                 span.rotation_degrees = b.atan2(*a).to_degrees();
+                // The generic reading-order extractor uses matrix row norms.
+                // Editable rotated text needs the lengths of the transformed
+                // writing and glyph-height axes (ISO 32000-1 9.4.4).
+                if span.rotation_degrees != 0.0 {
+                    let sx = a.hypot(*b);
+                    let sy = c.hypot(*d);
+                    let old_x = a.hypot(*c);
+                    let old_y = b.hypot(*d);
+                    if sx > 0.0 && sy > 0.0 && old_x > 0.0 && old_y > 0.0 {
+                        span.font_size *= sy / old_y;
+                        span.bbox.height = span.font_size;
+                        span.bbox.width *= sx / old_x;
+                        for width in &mut span.char_widths {
+                            *width *= sx / old_x;
+                        }
+                        span.horizontal_scaling *= sx / sy;
+                    }
+                }
             }
         }
         let spans = self.postprocess_spans_for_import(page_index, spans)?;
@@ -18756,7 +18801,7 @@ impl PdfDocument {
         for (ordinal, op) in operators.into_iter().enumerate() {
             extractor.paint.source_order = vec![ordinal];
             extractor.paint.clip = clips.current().clip;
-            clips.apply(&op);
+            clips.apply(&op)?;
             if matches!(
                 &op,
                 Operator::Tj { .. }
@@ -19443,7 +19488,7 @@ impl PdfDocument {
             extractor.paint.source_order = parent_paint.source_order.clone();
             extractor.paint.source_order.push(ordinal);
             extractor.paint.clip = clips.current().clip;
-            clips.apply(&op);
+            clips.apply(&op)?;
             if matches!(
                 &op,
                 Operator::Tj { .. }

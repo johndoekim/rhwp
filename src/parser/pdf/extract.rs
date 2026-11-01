@@ -156,7 +156,11 @@ pub(super) fn extract(
         .spans
         .checked_add(spans.len())
         .ok_or_else(|| PdfImportError::budget("span count overflow"))?;
-    if spans.len() > 20_000 || paths.len() > 20_000 || budget.spans > budget.policy.backend.spans {
+    // Paths already consumed the request-wide operation budget above. The
+    // bounded extractor reserves their storage; lowering checks format ID
+    // capacity before materialization. A second fixed path-count cap would
+    // reject dense pages independently of their selected request policy.
+    if spans.len() > 20_000 || budget.spans > budget.policy.backend.spans {
         return Err(PdfImportError::budget("extracted element budget exceeded"));
     }
     for span in &spans {
@@ -282,11 +286,18 @@ pub(super) fn extract(
         if handle.opacity == 0.0 {
             continue;
         }
-        let Some(visible) = handle.clip.visible_bounds(handle.bbox).map_err(|_| {
-            PdfImportError::new(
-                "PDF_IMAGE_UNSUPPORTED",
-                "non-rectangular image clipping is not supported",
-            )
+        let Some(visible) = checked(
+            pdf,
+            handle.clip.visible_bounds(handle.bbox),
+            "image_clip",
+            page,
+        )
+        .map_err(|mut error| {
+            if error.diagnostics.as_ref().and_then(|d| d.backend_kind) == Some("unsupported") {
+                error.code = "PDF_IMAGE_UNSUPPORTED";
+                error.message = "image clipping path is not supported";
+            }
+            error
         })?
         else {
             // This paint operation has an empty intersection with the active clip.

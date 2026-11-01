@@ -1,7 +1,7 @@
 import { ModalDialog } from './dialog';
 import type { PdfImportLayout } from '../core/pdf-import-layout';
 import { preparePdfForEditor, type PdfInputSource, type PreparedPdfDocument, type PdfImportPolicy } from '../core/pdf-open';
-import type { PdfImportOptions } from '../../../rhwp-shared/pdf/import-session.js';
+import type { PdfImportOptions, PdfPageProgress } from '../../../rhwp-shared/pdf/import-session.js';
 
 /** Read options before File.arrayBuffer; cancellation never publishes a candidate. */
 class PdfImportDialog extends ModalDialog {
@@ -10,6 +10,8 @@ class PdfImportDialog extends ModalDialog {
   private profile!: HTMLSelectElement;
   private limits!: HTMLTextAreaElement;
   private timeout!: HTMLInputElement;
+  private password!: HTMLInputElement;
+  private passwordArea!: HTMLDivElement;
   private details!: HTMLPreElement;
   private summary!: HTMLParagraphElement;
   private status!: HTMLParagraphElement;
@@ -56,6 +58,12 @@ class PdfImportDialog extends ModalDialog {
     const heading = document.createElement('summary'); heading.textContent = '고급 설정';
     const settings = document.createElement('div'); settings.className = 'dialog-pdf-import-settings';
     advanced.append(heading, settings); body.append(advanced);
+    this.passwordArea = document.createElement('div'); this.passwordArea.hidden = true;
+    this.password = document.createElement('input'); this.password.type = 'password';
+    this.password.autocomplete = 'off'; this.password.maxLength = 1024;
+    this.password.className = 'dialog-input'; this.password.oninput = () => this.clearError();
+    field('PDF 열기 암호', this.password, 'pdf-import-password', this.passwordArea);
+    body.append(this.passwordArea);
     this.timeout = document.createElement('input'); this.timeout.type = 'number'; this.timeout.min = '1';
     this.timeout.max = '300'; this.timeout.value = '30'; this.timeout.className = 'dialog-input';
     field('제한 시간 (초)', this.timeout, 'pdf-import-timeout', settings);
@@ -100,6 +108,7 @@ class PdfImportDialog extends ModalDialog {
 
     this.status = document.createElement('p'); this.status.setAttribute('role', 'status'); this.status.hidden = true;
     this.progress = document.createElement('progress'); this.progress.hidden = true;
+    this.progress.max = 100; this.progress.value = 0;
     this.progress.setAttribute('aria-label', 'PDF 가져오기 진행 중');
     this.error = document.createElement('p'); this.error.id = 'pdf-import-error';
     this.error.setAttribute('role', 'alert'); this.error.hidden = true;
@@ -113,7 +122,7 @@ class PdfImportDialog extends ModalDialog {
 
   private clearError(): void {
     this.error.hidden = true; this.error.textContent = '';
-    for (const control of [this.limits, this.timeout]) {
+    for (const control of [this.limits, this.timeout, this.password]) {
       control.removeAttribute('aria-invalid'); control.removeAttribute('aria-errormessage');
     }
   }
@@ -152,7 +161,7 @@ class PdfImportDialog extends ModalDialog {
 
   private options(): PdfImportOptions {
     if (this.limits.value.length > 8192) throw new Error('PDF_RESOURCE_POLICY: 한도 JSON이 너무 큽니다.');
-    return { ...(this.layout === 'editable' ? { layout: this.layout } : {}), resourceProfile: this.profile.value as 'standard' | 'constrained',
+    return { ...(this.password.value ? { password: this.password.value } : {}), ...(this.layout === 'editable' ? { layout: this.layout } : {}), resourceProfile: this.profile.value as 'standard' | 'constrained',
       ...(this.limits.value.trim() ? { resourceLimits: JSON.parse(this.limits.value) } : {}) };
   }
   private refreshPolicy(): void {
@@ -177,10 +186,19 @@ class PdfImportDialog extends ModalDialog {
       this.showError('맞춤 한도에 올바른 JSON을 입력하세요. 값은 선택한 처리 설정의 상한을 넘을 수 없습니다.', this.limits);
     }
   }
+  protected override shouldConfirmOnEnter(target: HTMLElement): boolean {
+    return target === this.password;
+  }
+
   protected onConfirm(): boolean {
     if (this.controller) return false;
     this.clearError();
     let options: PdfImportOptions, policy: PdfImportPolicy;
+    if (new TextEncoder().encode(this.password.value).length > 1024) {
+      this.passwordArea.hidden = false;
+      this.showError('암호는 UTF-8 기준 1,024바이트 이하로 입력하세요.', this.password, true);
+      return false;
+    }
     const seconds = Number(this.timeout.value);
     if (!Number.isFinite(seconds) || seconds < 1 || seconds > 300) {
       this.showError('제한 시간은 1~300초로 입력하세요.', this.timeout, true); return false;
@@ -191,29 +209,59 @@ class PdfImportDialog extends ModalDialog {
       return false;
     }
     this.controller = new AbortController();
-    this.profile.disabled = this.limits.disabled = this.timeout.disabled = true;
+    this.password.disabled = this.profile.disabled = this.limits.disabled = this.timeout.disabled = true;
     for (const action of this.limitActions) action.disabled = true;
     const button = this.dialog.querySelector<HTMLButtonElement>('.dialog-btn-primary')!;
     button.disabled = true;
     const phases: Record<string, string> = { initializing: '변환기 준비 중…', importing: 'PDF 변환 중…',
       ready: '변환 확인 중…', serializing: '편집 문서 준비 중…' };
-    this.progress.hidden = false;
-    this.showStatus('파일 읽는 중…');
+    this.progress.hidden = false; this.progress.value = 0;
+    this.progress.removeAttribute('aria-valuetext');
+    let pageProgress: PdfPageProgress | undefined;
+    this.showStatus('파일 읽는 중… · 0%');
     void preparePdfForEditor(this.source, options, policy, { signal: this.controller.signal,
-      timeoutMs: seconds * 1000, onProgress: phase => { this.showStatus(phases[phase] ?? phase); },
+      timeoutMs: seconds * 1000, onProgress: (phase, update) => {
+        if (this.settled || this.controller?.signal.aborted) return;
+        if (update) pageProgress = update;
+        if (pageProgress) {
+          const p = pageProgress;
+          const percent = Math.floor(p.completedPages * 100 / p.totalPages);
+          this.progress.value = percent;
+          const selection = p.totalPages !== p.sourcePageCount
+            ? ` (선택 ${p.completedPages}/${p.totalPages}쪽 완료)` : ` (${p.completedPages}쪽 완료)`;
+          const message = phase === 'importing'
+            ? `${p.sourcePage} / ${p.sourcePageCount}쪽 ${p.completedPages === p.totalPages ? '변환 완료' : '처리 중'} · ${percent}%${selection}`
+            : `페이지 변환 ${p.totalPages}/${p.totalPages}쪽 완료 · 100% — ${phases[phase] ?? phase}`;
+          this.progress.setAttribute('aria-valuetext', message);
+          this.showStatus(message);
+        } else {
+          this.showStatus(`${phases[phase] ?? phase} · 페이지 수 확인 중 · 0%`);
+        }
+      },
     }).then(async result => {
       if (this.settled) return;
-      this.showStatus('편집 문서 확인 중…');
+      this.progress.value = 100;
+      const message = `페이지 변환 완료 · ${result.pageCount}쪽 · 100% — 편집 문서 확인 중…`;
+      this.progress.setAttribute('aria-valuetext', message); this.showStatus(message);
       await this.onPrepared?.(result, this.controller!.signal);
       return result;
     }).then(result => {
       if (this.settled || !result) return;
-      this.settled = true; this.resolve(result); super.hide();
+      this.password.value = ''; this.settled = true; this.resolve(result); super.hide();
     }, error => {
       if (this.settled) return;
       this.progress.hidden = true; this.showStatus('');
-      this.showError(`가져오지 못했습니다. 설정을 확인한 뒤 다시 시도하세요. ${String(error)}`);
-      this.controller = null; this.profile.disabled = this.limits.disabled = this.timeout.disabled = false;
+      this.controller = null; this.password.disabled = this.profile.disabled = this.limits.disabled = this.timeout.disabled = false;
+      const message = String(error);
+      if (/PDF_PASSWORD_(REQUIRED|INVALID)/.test(message)) {
+        this.passwordArea.hidden = false; this.password.value = '';
+        this.showError(message.includes('PDF_PASSWORD_INVALID')
+          ? 'PDF 열기 암호가 올바르지 않습니다. 다시 입력하세요.'
+          : '암호가 설정된 PDF입니다. 열기 암호를 입력하세요.', this.password, true);
+      } else {
+        this.password.value = '';
+        this.showError(`가져오지 못했습니다. ${message}`);
+      }
       for (const action of this.limitActions) action.disabled = false;
       button.disabled = false; button.textContent = '다시 시도';
     });
@@ -221,6 +269,7 @@ class PdfImportDialog extends ModalDialog {
   }
   override hide(): void {
     this.controller?.abort();
+    if (this.password) this.password.value = '';
     if (!this.settled) {
       this.settled = true;
       this.reject(Object.assign(new Error('PDF_IMPORT_CANCELLED'), { code: 'PDF_IMPORT_CANCELLED' }));
