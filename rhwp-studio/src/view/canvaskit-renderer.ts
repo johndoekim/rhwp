@@ -3,7 +3,7 @@ import { compatibilityGlyphView } from './canvaskit/compatibility-glyph-view.ts'
 import { CanvasKitBundledFontFamily, syntheticItalicSkew } from './canvaskit/font-style-selection.ts';
 import { ordinaryTextFontFamilies, parseCssFontFamilyList } from '../core/font-substitution.ts';
 import { textRequiresComplexShaping } from './canvaskit/nominal-text-replay.ts';
-import { enclosedPua, enclosedPuaInnerText } from '../core/enclosed-pua.ts';
+import { enclosedPua, enclosedPuaInnerFaces, enclosedPuaInnerText } from '../core/enclosed-pua.ts';
 import { enclosedPuaGeometry } from './canvaskit/enclosed-pua-geometry.ts';
 import { imageRectIsReduced, imageRectUsesCubic } from './canvaskit/image-reduction.ts';
 import { rasterLineGeometry } from './canvaskit/raster-stroke.ts';
@@ -3536,17 +3536,38 @@ export class CanvasKitLayerRenderer {
               const displayNumber = enclosedPuaInnerText(glyph);
               let geometry = enclosedPuaGeometry(glyph, fontSize);
               if (geometry) {
-                const measuredFace = this.findPreparedTypeface(geometry.face)?.typeface;
-                // 안쪽 글자는 본문 regular face를 먼저 사용한다. 기호 글꼴의 사선 0을
-                // 선택하거나 그 윤곽에 다른 face의 source bounds를 적용하지 않는다.
-                const innerFace = measuredFace
-                  ?? this.findPreparedTypeface(requestedFontFamily,
-                    { bold: false, italic: false })?.typeface
-                  ?? this.defaultTypeface ?? typeface ?? this.symbolFallbackTypeface;
-                const innerFont = new this.canvasKit.Font(innerFace, fontSize);
+                const regular = { bold: false, italic: false };
+                const measuredFace = this.findPreparedTypeface(geometry.face, regular)?.typeface;
+                const innerFaces = [
+                  ...enclosedPuaInnerFaces(glyph).map(family =>
+                    this.findPreparedTypeface(family, regular)?.typeface),
+                  this.findPreparedTypeface(requestedFontFamily, regular)?.typeface,
+                  this.defaultTypeface, typeface, this.symbolFallbackTypeface,
+                ];
+                let innerFont: Font | null = null;
+                let usesMeasuredFace = false;
+                const innerLength = Array.from(displayNumber).length;
+                for (const face of new Set(innerFaces)) {
+                  if (!face) continue;
+                  const candidate = new this.canvasKit.Font(face, fontSize);
+                  try {
+                    const ids = candidate.getGlyphIDs(displayNumber, innerLength);
+                    if (ids.length === innerLength && ids.every(id => id !== 0)) {
+                      innerFont = candidate;
+                      usesMeasuredFace = face === measuredFace;
+                      break;
+                    }
+                  } finally {
+                    if (candidate !== innerFont) candidate.delete();
+                  }
+                }
+                if (!innerFont) {
+                  hasMissingGlyph = true;
+                  continue;
+                }
                 const framePaint = this.makeStrokePaint(style.color ?? '#000000', geometry.strokeWidth);
                 try {
-                  if (!measuredFace) {
+                  if (!usesMeasuredFace) {
                     const glyphs = innerFont.getGlyphIDs(displayNumber, displayNumber.length);
                     const bounds = innerFont.getGlyphBounds(glyphs);
                     geometry = enclosedPuaGeometry(glyph, fontSize, Array.from(bounds))!;

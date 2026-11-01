@@ -22,6 +22,13 @@ export function enclosedPuaInnerText(glyph: EnclosedPua): string {
   return glyph.kind === 'circledSeal' ? metrics.circledSeal.text : String(glyph.number);
 }
 
+/** Rust inner_faces와 같은 메트릭 기반 안쪽 글꼴 우선순위. */
+export function enclosedPuaInnerFaces(glyph: EnclosedPua): readonly string[] {
+  return glyph.kind === 'circledSeal'
+    ? [metrics.innerFace, metrics.circledSeal.publicFace]
+    : [metrics.innerFace];
+}
+
 /** 동봉 em 메트릭이 있는 기호. 다자리 네모 숫자는 기존 폴백을 쓴다. */
 export function enclosedPuaHasMetrics(glyph: EnclosedPua): boolean {
   return glyph.kind === 'circledSeal' || glyph.number < metrics.boxedDigit.digits.length;
